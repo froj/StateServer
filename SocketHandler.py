@@ -6,6 +6,8 @@ It shall listen on those sockets and call the corresponding deserializing
 function.
 The allowed message types are valid for all sockets.
 Each allowed message type has a corresponding callback function.
+
+handle() will block the thread!
 *****************************************************************************'''
 
 import socket       # for TCP connection
@@ -13,9 +15,10 @@ import select       # for poll (cross-platform I/O wait)
 
 class SocketHandler:
 
-    def __init__(self, sockets = None, msgtypes = None):
+    def __init__(self, sockets = None, msgtypes = None, headersize = 8):
         self.sockets = set(sockets)
         self.msgtypes = dict(msgtypes)  # input should be {UID:CallBack}
+        self.headersize = headersize
         self.poll = select.poll()
         for s in self.sockets:
             self.poll.register(s.fileno(), socket.POLLIN | socket.POLLPRI)
@@ -23,14 +26,14 @@ class SocketHandler:
 
 
     def addSocket(self, sock):
-        # add socket to list and register to poll
+        '''Add socket to list and register to poll'''
         if sock not in self.sockets:
             self.sockets.add(sock)
             self.poll.register(sock.fileno(), socket.POLLIN | socket.POLLPRI)
 
 
     def rmSocket(self, sock):
-        # remove socket from list and unregister from poll
+        '''Remove socket from list and unregister from poll'''
         try:
             self.sockets.remove(sock)
             self.poll.unregister(sock.fileno())
@@ -38,13 +41,22 @@ class SocketHandler:
             pass
 
 
+    def getSocketByFileno(self, fileno):
+        '''Return the corresponding socket object to a file descriptor'''
+        for sock in self.sockets:
+            if fileno == sock.fileno()
+                return sock
+        return None
+
+
+
     def addMsgType(self, msgtype, callback):
-        # add message type (UID) and the corresponding callback function pointer
+        '''Add message type (UID) and the corresponding callback func pointer'''
         self.msgtypes[msgtype] = callback
 
 
     def rmMsgType(self, msgtype):
-        # remove message type (UID)
+        '''Remove message type (UID)'''
         try:
             del self.msgtypes[msgtype]
         finally:
@@ -52,7 +64,30 @@ class SocketHandler:
 
 
     def handle(self):
-        # poll sockets, deserialize, callback
-        pass
+        '''Poll sockets (blocking), deserialize, callback'''
+        # XXX it might help to make a dictionary FileDescriptor:SocketObject
+        events = self.poll.poll()    # poll without timeout <=> blocking
+        
+        for fileno, event in events:
+            if event & select.POLLIN || event & select.POLLPRI:
+                # input ready
+                uid, length, data = recvPackage(fileno)
+                # XXX waiting for pa!vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv
+                self.msgtypes[uid](MessagePassing.deserialize(uid, data))
 
+            elif event & select.POLLHUP:
+                # hang up, close dat shiat
+                # XXX try bloc needed?
+                sock = self.getSocketByFileno(fileno)
+                sock.close()
+                self.rmSocket(sock)
+            elif event & select.POLLERR:
+                # Error, lolwut? Better close dat shit.
+                # XXX try bloc needed?
+                sock = self.getSocketByFileno(fileno)
+                sock.close()
+                self.rmSocket(sock)
+            elif event & select.POLLNVAL:
+                # Invalid request. Descriptor not open. Remove from list.
+                self.rmSocket(self.getSocketByFileno(fileno))
 
