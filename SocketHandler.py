@@ -16,38 +16,31 @@ import select       # for poll (cross-platform I/O wait)
 class SocketHandler:
 
     def __init__(self, sockets = None, msgtypes = None, headersize = 8):
-        self.sockets = set(sockets)
+        self.sockets = {}
+        for sock in sockets
+            self.sockets[sock.fileno()] = sock
+            self.poll.register(sock.fileno(), socket.POLLIN | socket.POLLPRI)
+            
         self.msgtypes = dict(msgtypes)  # input should be {UID:CallBack}
         self.headersize = headersize
         self.poll = select.poll()
-        for s in self.sockets:
-            self.poll.register(s.fileno(), socket.POLLIN | socket.POLLPRI)
 
 
 
     def addSocket(self, sock):
         '''Add socket to list and register to poll'''
-        if sock not in self.sockets:
-            self.sockets.add(sock)
+        if sock.fileno not in self.sockets:
+            self.sockets[sock.fileno()] = sock
             self.poll.register(sock.fileno(), socket.POLLIN | socket.POLLPRI)
 
 
     def rmSocket(self, sock):
         '''Remove socket from list and unregister from poll'''
         try:
-            self.sockets.remove(sock)
+            del self.sockets[sock.fileno()]
             self.poll.unregister(sock.fileno())
         finally:
             pass
-
-
-    def getSocketByFileno(self, fileno):
-        '''Return the corresponding socket object to a file descriptor'''
-        for sock in self.sockets:
-            if fileno == sock.fileno()
-                return sock
-        return None
-
 
 
     def addMsgType(self, msgtype, callback):
@@ -65,7 +58,6 @@ class SocketHandler:
 
     def handle(self):
         '''Poll sockets (blocking), deserialize, callback'''
-        # XXX it might help to make a dictionary FileDescriptor:SocketObject
         events = self.poll.poll()    # poll without timeout <=> blocking
         
         for fileno, event in events:
@@ -78,16 +70,16 @@ class SocketHandler:
             elif event & select.POLLHUP:
                 # hang up, close dat shiat
                 # XXX try bloc needed?
-                sock = self.getSocketByFileno(fileno)
-                sock.close()
-                self.rmSocket(sock)
+                self.sockets[fileno].close()
+                self.rmSocket(self.sockets[fileno])
+
             elif event & select.POLLERR:
                 # Error, lolwut? Better close dat shit.
                 # XXX try bloc needed?
-                sock = self.getSocketByFileno(fileno)
-                sock.close()
-                self.rmSocket(sock)
+                self.sockets[fileno].close()
+                self.rmSocket(self.sockets[fileno])
+
             elif event & select.POLLNVAL:
                 # Invalid request. Descriptor not open. Remove from list.
-                self.rmSocket(self.getSocketByFileno(fileno))
+                self.rmSocket(self.sockets[fileno])
 
