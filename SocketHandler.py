@@ -122,3 +122,12 @@ class SocketHandlerReceiver(object):
                 # make sure to get it all
                 while len(data) < length:
                     data += sock.recv(length-data)
+
+
+class SocketHandlerSender(object):
+    ''' This serializes and sends messages. '''
+
+    def __init__(self):
+        self.send_buffer = []
+        self.poll = select.poll()
+        self.descriptor_count = {}
