@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-'''*****************************************************************************
+'''****************************************************************************
 TODO: this is incomplete doc!
 
 This manages a list *open* TCP connections.
@@ -11,7 +11,7 @@ Each allowed message type has a corresponding callback function.
 The callback function has to have (uid, object) as parameters as parameters..
 
 handle() will block the thread!
-*****************************************************************************'''
+****************************************************************************'''
 
 import socket       # for TCP connection
 import select       # for poll (cross-platform I/O wait)
@@ -33,13 +33,11 @@ class SocketHandlerReceiver:
         self.msgtypes = {}
         self.poll = select.poll()
 
-
     def addSocket(self, sock):
         '''Add socket to list and register to poll'''
         if sock.fileno not in self.sockets:
             self.sockets[sock.fileno()] = sock
             self.poll.register(sock.fileno(), socket.POLLIN | socket.POLLPRI)
-
 
     def rmSocket(self, sock):
         '''Remove socket from list and unregister from poll'''
@@ -50,12 +48,10 @@ class SocketHandlerReceiver:
             # couldn't remove / doesn't exist
             pass
 
-
     def addMsgType(self, msg_uid, msg_class, callback):
         ''' Add message type (UID) and the corresponding callback func pointer.
             Overrides any existing entry.'''
         self.msgtypes[msg_uid] = (msg_class, callback)
-
 
     def rmMsgType(self, msgtype):
         '''Remove message type (by UID)'''
@@ -64,7 +60,6 @@ class SocketHandlerReceiver:
         except:
             # couldn't remove / doesn't exist
             pask
-
 
     def handle(self):
         '''Poll sockets (blocking), deserialize, callback'''
@@ -95,12 +90,16 @@ class SocketHandlerReceiver:
                 # Invalid request. Descriptor not open. Remove from list.
                 self.rmSocket(self.sockets[fileno])
 
-
     def recvPackage(self, sock):
-        header = sock.recv(HEADER_LENGTH)       # recv the header of the package
+        header = sock.recv(HEADER_LENGTH)  # recv the header of the package
         # extract the length (big-endian) and uid
-        length = struct.unpack(PACK_FORMAT_STRING, header[0:HEADER_LENGTH_FIELD])
-        uid = header[HEADER_LENGTH_FIELD:HEADER_LENGTH_FIELD + HEADER_HASH_FIELD]
+        length = struct.unpack(
+            PACK_FORMAT_STRING,
+            header[0:HEADER_LENGTH_FIELD]
+            )
+        uid = header[
+            HEADER_LENGTH_FIELD:HEADER_LENGTH_FIELD + HEADER_HASH_FIELD
+            ]
         try:
             msgtype = self.msgtypes[uid]
             msg_class = msgtype[0]  # extract class-pointer of the message type
@@ -117,7 +116,7 @@ class SocketHandlerReceiver:
                     sock.close()
                 except:
                     pass
-                self.rmSocket(sock])
+                self.rmSocket(sock)
 
             else:
                 data = sock.recv(length)    # receive data
