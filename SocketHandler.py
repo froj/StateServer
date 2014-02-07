@@ -150,5 +150,7 @@ class SocketHandlerSender(object):
             self.descriptor_count[sock.fileno()] += 1
             return self.descriptor_count[sock.fileno()]
         except KeyError:
-            self.descriptor_count[sock.fileno()] = 0
-            return 0
+            # register to poll if it's first
+            self.descriptor_count[sock.fileno()] = 1
+            self.poll.register(sock.fileno(), select.POLLOUT)
+            return 1
