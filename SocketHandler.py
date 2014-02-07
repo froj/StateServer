@@ -131,3 +131,24 @@ class SocketHandlerSender(object):
         self.send_buffer = []
         self.poll = select.poll()
         self.descriptor_count = {}
+
+    def send_package(self, sock, msg):
+        ''' Add a message to the list of buffers to send.
+            Returns how many packages there are for this socket.
+
+            Might be interesting to send to a list of sockets.
+        '''
+
+        message = msg.serialize()   # create bytestream
+        # put message header (length + hash/uid) on top
+        message = msg.hash + message
+        message = struct.pack(PACK_FORMAT_STRING, len(message)) + message
+
+        # append messge to list of packages to send
+        self.send_buffer.append((sock, message))
+        try:    # count packages per socket
+            self.descriptor_count[sock.fileno()] += 1
+            return self.descriptor_count[sock.fileno()]
+        except KeyError:
+            self.descriptor_count[sock.fileno()] = 0
+            return 0
