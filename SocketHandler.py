@@ -13,18 +13,13 @@ handle() will block the thread!
 import socket       # for TCP connection
 import select       # for poll (cross-platform I/O wait)
 
-class SocketHandler:
 
-    def __init__(self, sockets = None, msgtypes = None, headersize = 8):
+class SocketHandlerReceiver:
+
+    def __init__(self, recv_unkown_data=False):
         self.sockets = {}
-        for sock in sockets
-            self.sockets[sock.fileno()] = sock
-            self.poll.register(sock.fileno(), socket.POLLIN | socket.POLLPRI)
-            
-        self.msgtypes = dict(msgtypes)  # input should be {UID:CallBack}
-        self.headersize = headersize
+        self.msgtypes = {}
         self.poll = select.poll()
-
 
 
     def addSocket(self, sock):
