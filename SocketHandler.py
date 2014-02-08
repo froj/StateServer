@@ -134,7 +134,9 @@ class SocketHandlerSender(object):
         self.descriptor_count = {}  # fileno:count
 
     def send(self):
-        ''' work the send buffers '''
+        ''' work the send buffers
+            Returns the total packages left to send.
+        '''
         events = dict(self.poll.poll())
 
         for buffer in self.send_buffer:
@@ -164,6 +166,8 @@ class SocketHandlerSender(object):
                 elif event & select.POLLNVAL:
                     # Invalid request, close the socket, remove all traces
                     self._exterminate_buffer(buffer)
+
+        return len(self.send_buffer)
 
     def _remove_buffer(self, buffer):
         ''' Remove a buffer from the list and uregister the file descriptor if
