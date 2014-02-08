@@ -70,7 +70,7 @@ class SocketHandlerReceiver(object):
         for fileno, event in events:
             if event & select.POLLIN or event & select.POLLPRI:
                 # input ready
-                self.recv_package(self.sockets[fileno])
+                self._recv_package(self.sockets[fileno])
 
             elif event & select.POLLHUP:
                 # hang up, close dat shiat
@@ -92,7 +92,7 @@ class SocketHandlerReceiver(object):
                 # Invalid request. Descriptor not open. Remove from list.
                 self.rm_socket(self.sockets[fileno])
 
-    def recv_package(self, sock):
+    def _recv_package(self, sock):
         ''' read from TCP socket, deserialize, and callback '''
         header = sock.recv(HEADER_LENGTH)  # recv the header of the package
         # extract the length (big-endian) and uid
