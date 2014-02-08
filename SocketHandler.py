@@ -51,7 +51,8 @@ class SocketHandlerReceiver(object):
 
     def add_msg_type(self, msg_uid, msg_class, callback):
         ''' Add message type (UID) and the corresponding callback func pointer.
-            Overrides any existing entry.'''
+            Overrides any existing entry.
+        '''
         self.msgtypes[msg_uid] = (msg_class, callback)
 
     def rm_msg_type(self, msgtype):
@@ -128,9 +129,78 @@ class SocketHandlerSender(object):
     ''' This serializes and sends messages. '''
 
     def __init__(self):
-        self.send_buffer = []
+        self.send_buffer = []   # entries are (socket, message)
         self.poll = select.poll()
-        self.descriptor_count = {}
+        self.descriptor_count = {}  # fileno:count
+
+    def send(self):
+        ''' work the send buffers '''
+        events = dict(self.poll.poll())
+
+        for buffer in self.send_buffer:
+            if buffer[0].fileno() in events:
+                # we've found a socket with an event
+                event = events[buffer[0].fileno()]
+                if event & select.POLLOUT:
+                    # the socket is ready to send
+                    sentbytes = buffer[0].send(buffer[1])
+                    if sentbytes < len(buffer[1]):
+                        # only parts could be send
+                        buffer[1] = buffer[1][sentbytes:len(buffer[1])]
+                        # we need to prevent getting the messages scrambled up
+                        del events[buffer[0].fileno()]
+                    else:
+                        # all was sent, remove the buffer
+                        self._remove_buffer(buffer)
+
+                elif event & select.POLLHUP:
+                    # hung up, close the socket, remove all traces
+                    self._exterminate_buffer(buffer)
+
+                elif event & select.POLLERR:
+                    # error, close the socket, remove all traces
+                    self._exterminate_buffer(buffer)
+
+                elif event & select.POLLNVAL:
+                    # Invalid request, close the socket, remove all traces
+                    self._exterminate_buffer(buffer)
+
+    def _remove_buffer(self, buffer):
+        ''' Remove a buffer from the list and uregister the file descriptor if
+            the count is at zero.
+        '''
+        self.send_buffer.remove(buffer)
+        try:
+            if self.descriptor_count[buffer[0].fileno()] == 1:
+                try:
+                    self.poll.unregister(buffer[0].fileno())
+                except KeyError:
+                    # damnit, not registered
+                    pass
+            else:
+                self.descriptor_count[buffer[0].fileno()] -= 1
+        except KeyError:
+            # dafuq? not in the dictionary?
+            pass
+
+    def _exterminate_buffer(self, buffer):
+        ''' If a socket hung up or doesn't exist anymore, we should remove any
+            occurrence in the list.
+        '''
+        buffer[0].close()
+        for buf in self.send_buffer:
+            if buf[0] is buffer[0]:
+                self.send_buffer.remove(buf)
+
+        try:
+            del self.descriptor_count[buffer[0].fileno()]
+        except KeyError:
+            pass
+
+        try:
+            self.poll.unregister(buffer[0].fileno())
+        except KeyError:
+            pass
 
     def send_package(self, sock, msg):
         ''' Add a message to the list of buffers to send.
@@ -138,7 +208,6 @@ class SocketHandlerSender(object):
 
             Might be interesting to send to a list of sockets.
         '''
-
         message = msg.serialize()   # create bytestream
         # put message header (length + hash/uid) on top
         message = msg.hash + message
