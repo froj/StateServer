@@ -10,12 +10,15 @@ Each allowed message type has a corresponding callback function.
 The callback function has to have (uid, object) as parameters as parameters..
 
 handle() will block the thread!
+sockets have to be nonblocking when they're added! (socket.setnonblocking(0))
 ****************************************************************************'''
 
 #import socket       # for TCP connection
 import select       # for poll (cross-platform I/O wait)
 import struct       # to unpack bytestreams
+import logging
 
+logging.basicConfig(filename='sockethandler.log', level=logging.DEBUG)
 
 HEADER_LENGTH_FIELD = 4
 HEADER_HASH_FIELD = 8
