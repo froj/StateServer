@@ -27,12 +27,14 @@ PACK_FORMAT_STRING = '>i'
 
 ACCEPTED_GARBAGE = 1024     # max length of unkown data without socket.close()
 
+SEND_POLL_TIMEOUT = 1   # milliseconds
+
 
 class SocketHandlerReceiver(object):
     ''' This deserializes incoming messages and does callbacks. '''
 
     def __init__(self, recv_unkown_data=False):
-        self.sockets = {}
+        self.sockets = {}       # filedescriptor:(socket, buffer)
         self.msgtypes = {}
         self.poll = select.poll()
         self.recv_unkown_data = recv_unkown_data
@@ -40,7 +42,7 @@ class SocketHandlerReceiver(object):
     def add_socket(self, sock):
         '''Add socket to list and register to poll'''
         if sock.fileno not in self.sockets:
-            self.sockets[sock.fileno()] = sock
+            self.sockets[sock.fileno()] = (sock, b'')
             self.poll.register(sock.fileno(), select.POLLIN | select.POLLPRI)
 
     def rm_socket(self, sock):
@@ -66,6 +68,7 @@ class SocketHandlerReceiver(object):
             # couldn't remove / doesn't exist
             pass
 
+# TODO we'll need a timeout for the poll (same reason as for sending)
     def handle(self):
         '''Poll sockets (blocking), deserialize, callback'''
         events = self.poll.poll()    # poll without timeout <=> blocking
@@ -73,59 +76,94 @@ class SocketHandlerReceiver(object):
         for fileno, event in events:
             if event & select.POLLIN or event & select.POLLPRI:
                 # input ready
-                self._recv_package(self.sockets[fileno])
+                self._recv_package(*self.sockets[fileno])
 
             elif event & select.POLLHUP:
                 # hang up, close dat shiat
                 try:
-                    self.sockets[fileno].close()
-                    self.rm_socket(self.sockets[fileno])
+                    self.sockets[fileno][0].close()
+                    self.rm_socket(self.sockets[fileno][0])
                 except KeyError:
                     pass
+                logging.info('Socket hang up.')
 
             elif event & select.POLLERR:
                 # Error, lolwut? Better close dat shit.
                 try:
-                    self.sockets[fileno].close()
-                    self.rm_socket(self.sockets[fileno])
+                    self.sockets[fileno][0].close()
+                    self.rm_socket(self.sockets[fileno][0])
                 except KeyError:
                     pass
+                logging.warning("Socket error.")
 
             elif event & select.POLLNVAL:
                 # Invalid request. Descriptor not open. Remove from list.
-                self.rm_socket(self.sockets[fileno])
+                self.rm_socket(self.sockets[fileno][0])
+                logging.info('Socket invalid request.')
 
-    def _recv_package(self, sock):
+    def _recv_package(self, sock, buffer):
         ''' read from TCP socket, deserialize, and callback '''
-        header = sock.recv(HEADER_LENGTH)  # recv the header of the package
-        # extract the length (big-endian) and uid
-        length = struct.unpack(
-            PACK_FORMAT_STRING,
-            header[0:HEADER_LENGTH_FIELD]
-            )
-        uid = header[
-            HEADER_LENGTH_FIELD:HEADER_LENGTH_FIELD + HEADER_HASH_FIELD
-            ]
-        try:
-            msgtype = self.msgtypes[uid]
-            msg_class = msgtype[0]  # extract class-pointer of the message type
-            callback = msgtype[1]   # extract callback function pointer
-            data = sock.recv(length)    # receive data
-            # make sure to get it all
-            while len(data) < length:
-                data += sock.recv(length-data)
-            callback(uid, msg_class(data))
-        except KeyError:
-            # unkown UID! (first line of the try block probably failed)
-            if not self.recv_unkown_data or length > ACCEPTED_GARBAGE:
-                sock.close()
-                self.rm_socket(sock)
+        _buffer = buffer
+
+        if len(_buffer) < HEADER_LENGTH:
+            _buffer += sock.recv(HEADER_LENGTH - len(_buffer))
+
+        if len(_buffer) >= HEADER_LENGTH:
+            # unpack the header
+            length, = struct.unpack(
+                PACK_FORMAT_STRING,
+                _buffer[0:HEADER_LENGTH_FIELD]
+                )
+            uid, = struct.unpack(
+                PACK_FORMAT_STRING,
+                _buffer[
+                    HEADER_LENGTH_FIELD:HEADER_LENGTH_FIELD + HEADER_HASH_FIELD
+                    ]
+                )
+            # check if the message type is known
+            if uid in self.msgtypes:
+                try:
+                    _buffer += sock.recv(length - len(_buffer))
+                except:
+                    # Can't receive from the socket right now
+                    self.sockets[sock.fileno] = (sock, _buffer)
+                    return
+
+                if len(_buffer) == length:
+                    # received all; callback
+                    try:
+                        msgtype = self.msgtypes[uid]
+                        # extract class-pointer of the message type
+                        msg_class = msgtype[0]
+                        # extract callback function pointer
+                        callback = msgtype[1]
+                        callback(uid, msg_class.deserialize(_buffer))
+                        # empty the buffer
+                        self.sockets[sock.fileno] = (sock, b'')
+                    except KeyError:
+                        # well that sucks. TODO: no need to catch?
+                        pass
 
             else:
-                data = sock.recv(length)    # receive data
-                # make sure to get it all
-                while len(data) < length:
-                    data += sock.recv(length-data)
+                # unkown message type!
+                if length > ACCEPTED_GARBAGE:
+                    # too much bullshit. drop the socket.
+                    logging.warning('Garbage from %s %d.', *sock.getpeername())
+                    sock.close()
+                    self.rm_socket(sock)
+
+                else:
+                    # receive and drop the data
+                    try:
+                        _buffer += sock.recv(length - len(_buffer))
+                    except:
+                        # Can't receive from the socket right now
+                        self.sockets[sock.fileno] = (sock, _buffer)
+                        return
+
+                    if len(_buffer) == length:
+                        # empty the buffer. TODO: maybe log it before?
+                        self.sockets[sock.fileno] = (sock, b'')
 
 
 class SocketHandlerSender(object):
@@ -140,35 +178,45 @@ class SocketHandlerSender(object):
         ''' work the send buffers
             Returns the total packages left to send.
         '''
-        events = dict(self.poll.poll())
+        events = dict(self.poll.poll(SEND_POLL_TIMEOUT))
 
-        for buffer in self.send_buffer:
-            if buffer[0].fileno() in events:
-                # we've found a socket with an event
-                event = events[buffer[0].fileno()]
-                if event & select.POLLOUT:
-                    # the socket is ready to send
-                    sentbytes = buffer[0].send(buffer[1])
-                    if sentbytes < len(buffer[1]):
-                        # only parts could be send
-                        buffer[1] = buffer[1][sentbytes:len(buffer[1])]
-                        # we need to prevent getting the messages scrambled up
-                        del events[buffer[0].fileno()]
-                    else:
-                        # all was sent, remove the buffer
-                        self._remove_buffer(buffer)
+        if events:
+            for buffer in self.send_buffer:
+                if buffer[0].fileno() in events:
+                    # we've found a socket with an event
+                    event = events[buffer[0].fileno()]
+                    if event & select.POLLOUT:
+                        # the socket is ready to send
+                        try:
+                            sentbytes = buffer[0].send(buffer[1])
+                        except ConnectionResetError:
+                            logging.warning('ConnectionResetError')
+                            sentbytes = 0
 
-                elif event & select.POLLHUP:
-                    # hung up, close the socket, remove all traces
-                    self._exterminate_buffer(buffer)
+                        if sentbytes < len(buffer[1]):
+                            # only parts could be send
+                            # TODO this is retarded, because tuple
+                            buffer = (
+                                buffer[0],
+                                buffer[1][sentbytes:len(buffer[1])]
+                                )
+                            # prevent getting the messages scrambled up
+                            del events[buffer[0].fileno()]
+                        else:
+                            # all was sent, remove the buffer
+                            self._remove_buffer(buffer)
 
-                elif event & select.POLLERR:
-                    # error, close the socket, remove all traces
-                    self._exterminate_buffer(buffer)
+                    elif event & select.POLLHUP:
+                        # hung up, close the socket, remove all traces
+                        self._exterminate_buffer(buffer)
 
-                elif event & select.POLLNVAL:
-                    # Invalid request, close the socket, remove all traces
-                    self._exterminate_buffer(buffer)
+                    elif event & select.POLLERR:
+                        # error, close the socket, remove all traces
+                        self._exterminate_buffer(buffer)
+
+                    elif event & select.POLLNVAL:
+                        # Invalid request, close the socket, remove all traces
+                        self._exterminate_buffer(buffer)
 
         return len(self.send_buffer)
 
@@ -218,7 +266,10 @@ class SocketHandlerSender(object):
         message = msg.serialize()   # create bytestream
         # put message header (length + hash/uid) on top
         message = msg.hash + message
-        message = struct.pack(PACK_FORMAT_STRING, len(message)) + message
+        message = struct.pack(
+            PACK_FORMAT_STRING,
+            len(message) + HEADER_LENGTH_FIELD
+            ) + message
 
         # append messge to list of packages to send
         self.send_buffer.append((sock, message))
