@@ -107,6 +107,8 @@ class SocketHandlerReceiver(object):
 
         if len(_buffer) < HEADER_LENGTH:
             _buffer += sock.recv(HEADER_LENGTH - len(_buffer))
+            if len(_buffer) == 0:
+                return
 
         if len(_buffer) >= HEADER_LENGTH:
             # unpack the header
@@ -114,12 +116,9 @@ class SocketHandlerReceiver(object):
                 PACK_FORMAT_STRING,
                 _buffer[0:HEADER_LENGTH_FIELD]
                 )
-            uid, = struct.unpack(
-                PACK_FORMAT_STRING,
-                _buffer[
-                    HEADER_LENGTH_FIELD:HEADER_LENGTH_FIELD + HEADER_HASH_FIELD
-                    ]
-                )
+            uid = _buffer[
+                HEADER_LENGTH_FIELD:(HEADER_LENGTH_FIELD + HEADER_HASH_FIELD)
+                ]
             # check if the message type is known
             if uid in self.msgtypes:
                 try:
@@ -137,7 +136,10 @@ class SocketHandlerReceiver(object):
                         msg_class = msgtype[0]
                         # extract callback function pointer
                         callback = msgtype[1]
-                        callback(uid, msg_class.deserialize(_buffer))
+                        callback(
+                            uid,
+                            msg_class.deserialize(_buffer[HEADER_LENGTH:])
+                            )
                         # empty the buffer
                         self.sockets[sock.fileno] = (sock, b'')
                     except KeyError:
