@@ -27,6 +27,7 @@ PACK_FORMAT_STRING = '>i'
 
 ACCEPTED_GARBAGE = 1024     # max length of unkown data without socket.close()
 
+RECV_POLL_TIMEOUT = 1   # milliseconds
 SEND_POLL_TIMEOUT = 1   # milliseconds
 
 
@@ -70,8 +71,8 @@ class SocketHandlerReceiver(object):
 
 # TODO we'll need a timeout for the poll (same reason as for sending)
     def handle(self):
-        '''Poll sockets (blocking), deserialize, callback'''
-        events = self.poll.poll()    # poll without timeout <=> blocking
+        '''Poll sockets, deserialize, callback'''
+        events = self.poll.poll(RECV_POLL_TIMEOUT)
 
         for fileno, event in events:
             if event & select.POLLIN or event & select.POLLPRI:
